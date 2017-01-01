@@ -12,3 +12,9 @@ class KeyResourceAdmin(admin.ModelAdmin):
 @admin.register(models.Data)
 class DataResourceAdmin(admin.ModelAdmin):
     pass
+
+
+@admin.register(models.SessionKey)
+class SessionResourceAdmin(admin.ModelAdmin):
+    class Meta:
+        verbose_name = "Session"

@@ -5,6 +5,8 @@ import string
 from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto.Hash import SHA256, MD5
 from Crypto.PublicKey import RSA
+from datetime import timedelta, datetime
+from django.utils import timezone
 from django.contrib.auth.models import User
 from django.db import models
 from django.utils.translation import ugettext_lazy as _
@@ -111,3 +113,61 @@ class Key(models.Model):
             random.SystemRandom().choice(string.ascii_letters + string.digits + string.punctuation) for _ in range(256))
 
 
+class SessionKey(models.Model):
+
+    session_id = models.CharField(max_length=20)
+    client_public_key = models.TextField()
+    server_private_key = models.TextField()
+    user = models.ForeignKey(User)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__client_key = None
+        self.__server_key = None
+
+    @classmethod
+    def create(cls, user):
+        session = cls(user=user)
+        client_key = RSA.generate(1024)
+        server_key = RSA.generate(1024)
+        session.client_public_key = client_key.publickey().exportKey()
+        session.server_private_key = server_key.exportKey()
+        session.session_id = session.server_key_id[:10]+session.client_key_id[:10]
+        session.__client_key = client_key
+        session.__server_key = server_key
+        return session
+
+    def encrypt_for_client(self, data):
+        key = RSA.importKey(self.client_public_key)
+        return PKCS1_OAEP.new(key).encrypt(data)
+
+    def decrypt_from_client(self, data):
+        key = RSA.importKey(self.server_private_key)
+        return PKCS1_OAEP.new(key).decrypt(data)
+
+    @property
+    def valid(self):
+        return timezone.now() - timedelta(days=1) < self.created_at
+
+    def save(self, force_insert=False, force_update=False, using=None, update_fields=None):
+        self.__client_key = None
+        super().save(force_insert, force_update, using, update_fields)
+
+    @property
+    def client_private_key(self):
+        if self.__client_key is not None:
+            return self.__client_key
+        else:
+            raise Exception('Can not get private key of client after save into db')
+
+    @property
+    def client_key_id(self):
+        return MD5.new(RSA.importKey(self.client_public_key).exportKey('DER')).hexdigest().upper()
+
+    @property
+    def server_key_id(self):
+        return MD5.new(RSA.importKey(self.server_private_key).publickey().exportKey('DER')).hexdigest().upper()
+
+    def __str__(self):
+        return "{} ({})".format(self.user, self.session_id)
